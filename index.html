@@ -38,9 +38,7 @@
       cursor: pointer;
       border: none;
     }
-    button:hover {
-      background: #357ab8;
-    }
+    button:hover { background: #357ab8; }
     iframe {
       width: 90%;
       height: 400px;
@@ -54,10 +52,14 @@
     .room-list button { width: 90%; margin: 5px auto; }
     .btn-delete { background: #e74c3c; }
     .btn-delete:hover { background: #c0392b; }
+    .section { margin: 15px 0; }
+    .section p { margin: 5px 0; }
+    #comments-list { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; padding: 5px; background: #f9f9f9; color: #333; }
+    #comments-list p { margin: 5px; font-size: 14px; text-align: left; }
   </style>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-    import { getDatabase, ref, set, get, child, onValue, remove } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+    import { getDatabase, ref, set, get, child, onValue, remove, push, runTransaction } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
     const firebaseConfig = {
       apiKey: "AIzaSyBq0Z-KTEa3ujPX931xe9HFS8g4CtUOXFk",
       authDomain: "room-c4243.firebaseapp.com",
@@ -69,8 +71,9 @@
     };
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
+    window.currentRoomCode = null;
     window.extractYouTubeID = function(url) {
-      let match = url.match(/(?:https?:\/\/)?(?:www\.)?youtu(?:\.be\/|be\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
+      let match = url.match(/(?:https?:\/\/)?(?:www\.)?youtu(?:\.be\/|be\.com\/(?:watch\\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
       return match ? match[1] : null;
     }
     window.createRoom = async function() {
@@ -98,7 +101,7 @@
         timestamp: Date.now()
       }).then(() => {
         alert("تم إنشاء الغرفة بنجاح!");
-        listRooms();
+        loadVideo(roomCode, { owner: ownerName, videoId: videoId });
       }).catch(error => {
         alert("حدث خطأ أثناء إنشاء الغرفة: " + error);
       });
@@ -135,9 +138,9 @@
         return;
       }
       const roomRef = ref(db, "rooms/" + roomCode);
-      get(child(ref(db), "rooms/" + roomCode)).then(snapshot => {
+      get(roomRef).then(snapshot => {
         if (snapshot.exists()) {
-          loadVideo(snapshot.val());
+          loadVideo(roomCode, snapshot.val());
         } else {
           alert("الغرفة غير موجودة.");
         }
@@ -157,17 +160,64 @@
             let roomData = childSnapshot.val();
             let btn = document.createElement("button");
             btn.textContent = `🔹 غرفة ${childSnapshot.key} ( ${roomData.owner} )`;
-            btn.onclick = () => loadVideo(roomData);
+            btn.onclick = () => loadVideo(childSnapshot.key, roomData);
             roomListDiv.appendChild(btn);
           });
         }
         roomListDiv.classList.remove("hidden");
       });
     }
-    window.loadVideo = function(roomData) {
+    window.loadVideo = function(roomCode, roomData) {
+      window.currentRoomCode = roomCode;
       document.getElementById("room-owner").innerText = roomData.owner;
       document.getElementById("video-frame").src = `https://www.youtube-nocookie.com/embed/${roomData.videoId}?autoplay=1&rel=0`;
       document.getElementById("video-section").classList.remove("hidden");
+      setupViewerPresence(roomCode);
+      setupReactions(roomCode);
+      setupComments(roomCode);
+    }
+    function setupViewerPresence(roomCode) {
+      const viewerId = "viewer_" + Date.now() + "_" + Math.floor(Math.random()*1000);
+      const viewerRef = ref(db, "rooms/" + roomCode + "/viewers/" + viewerId);
+      set(viewerRef, true);
+      viewerRef.onDisconnect().remove();
+      onValue(ref(db, "rooms/" + roomCode + "/viewers"), snapshot => {
+        document.getElementById("viewer-count").innerText = snapshot.numChildren();
+      });
+    }
+    function setupReactions(roomCode) {
+      const likeBtn = document.getElementById("btn-like");
+      likeBtn.onclick = function() {
+        const likeRef = ref(db, "rooms/" + roomCode + "/reactions/like");
+        runTransaction(likeRef, currentData => {
+          return (currentData || 0) + 1;
+        });
+      }
+      onValue(ref(db, "rooms/" + roomCode + "/reactions/like"), snapshot => {
+        document.getElementById("like-count").innerText = snapshot.val() || 0;
+      });
+    }
+    function setupComments(roomCode) {
+      const sendBtn = document.getElementById("btn-send-comment");
+      sendBtn.onclick = function() {
+        const commentText = document.getElementById("comment-input").value.trim();
+        if(commentText === "") return;
+        push(ref(db, "rooms/" + roomCode + "/comments"), {
+          text: commentText,
+          timestamp: Date.now()
+        });
+        document.getElementById("comment-input").value = "";
+      }
+      onValue(ref(db, "rooms/" + roomCode + "/comments"), snapshot => {
+        const commentsDiv = document.getElementById("comments-list");
+        commentsDiv.innerHTML = "";
+        snapshot.forEach(child => {
+          const comment = child.val();
+          const p = document.createElement("p");
+          p.innerText = comment.text;
+          commentsDiv.appendChild(p);
+        });
+      });
     }
   </script>
 </head>
@@ -198,6 +248,18 @@
     <h2>مشاهدة الفيديو</h2>
     <p>المضيف: <span id="room-owner"></span></p>
     <iframe id="video-frame" allowfullscreen></iframe>
+    <div class="section">
+      <p>عدد المشاهدين: <span id="viewer-count">0</span></p>
+    </div>
+    <div class="section" id="reaction-section">
+      <button id="btn-like">أعجبني</button>
+      <p>عدد الإعجابات: <span id="like-count">0</span></p>
+    </div>
+    <div class="section" id="comment-section">
+      <input type="text" id="comment-input" placeholder="اكتب تعليقك هنا">
+      <button id="btn-send-comment">أرسل تعليق</button>
+      <div id="comments-list"></div>
+    </div>
     <button onclick="goBack()">رجوع</button>
   </div>
   <script>
