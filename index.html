@@ -9,19 +9,19 @@
     body {
       font-family: 'Cairo', sans-serif;
       background: linear-gradient(to right, #4a90e2, #764ba2);
-      color: white;
+      color: #fff;
       text-align: center;
       padding: 20px;
     }
     .container {
-      background: #ffffff;
+      background: #fff;
       color: #333;
       padding: 20px;
-      border-radius: 12px;
+      border-radius: 10px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       width: 90%;
-      max-width: 400px;
-      margin: auto;
+      max-width: 500px;
+      margin: 20px auto;
     }
     input, button {
       width: 90%;
@@ -34,25 +34,30 @@
     }
     button {
       background: #4a90e2;
-      color: white;
+      color: #fff;
       cursor: pointer;
       border: none;
     }
-    button:hover { background: #357ab8; }
+    button:hover {
+      background: #357ab8;
+    }
     iframe {
       width: 90%;
       height: 400px;
       border: none;
       margin: 10px auto;
       display: block;
+      border-radius: 5px;
     }
     .hidden { display: none; }
     .room-list { text-align: center; margin-top: 10px; }
     .room-list button { width: 90%; margin: 5px auto; }
+    .btn-delete { background: #e74c3c; }
+    .btn-delete:hover { background: #c0392b; }
   </style>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-    import { getDatabase, ref, set, get, child, onValue } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+    import { getDatabase, ref, set, get, child, onValue, remove } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
     const firebaseConfig = {
       apiKey: "AIzaSyBq0Z-KTEa3ujPX931xe9HFS8g4CtUOXFk",
       authDomain: "room-c4243.firebaseapp.com",
@@ -64,7 +69,11 @@
     };
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
-    window.createRoom = function() {
+    window.extractYouTubeID = function(url) {
+      let match = url.match(/(?:https?:\/\/)?(?:www\.)?youtu(?:\.be\/|be\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
+      return match ? match[1] : null;
+    }
+    window.createRoom = async function() {
       const ownerName = document.getElementById("owner-name").value.trim();
       const roomCode = document.getElementById("room-code").value.trim();
       const videoLink = document.getElementById("youtube-link").value.trim();
@@ -77,7 +86,13 @@
         alert("رابط يوتيوب غير صحيح.");
         return;
       }
-      set(ref(db, "rooms/" + roomCode), {
+      const roomRef = ref(db, "rooms/" + roomCode);
+      const roomSnap = await get(roomRef);
+      if(roomSnap.exists()){
+        alert("رمز الغرفة موجود مسبقاً. اختر رمزاً آخر.");
+        return;
+      }
+      set(roomRef, {
         owner: ownerName,
         videoId: videoId,
         timestamp: Date.now()
@@ -88,12 +103,38 @@
         alert("حدث خطأ أثناء إنشاء الغرفة: " + error);
       });
     }
-    window.joinRoom = function() {
+    window.deleteRoom = async function() {
+      const roomCode = document.getElementById("room-code").value.trim();
+      const ownerName = document.getElementById("owner-name").value.trim();
+      if(!roomCode || !ownerName){
+        alert("يرجى إدخال رمز الغرفة واسمك.");
+        return;
+      }
+      const roomRef = ref(db, "rooms/" + roomCode);
+      const roomSnap = await get(roomRef);
+      if(!roomSnap.exists()){
+        alert("الغرفة غير موجودة.");
+        return;
+      }
+      const roomData = roomSnap.val();
+      if(roomData.owner !== ownerName){
+        alert("لا يمكنك حذف غرفة ليست من إنشائك.");
+        return;
+      }
+      remove(roomRef).then(() => {
+        alert("تم حذف الغرفة بنجاح.");
+        listRooms();
+      }).catch(error => {
+        alert("حدث خطأ أثناء حذف الغرفة: " + error);
+      });
+    }
+    window.joinRoom = async function() {
       const roomCode = document.getElementById("join-room-code").value.trim();
       if (!roomCode) {
         alert("يرجى إدخال رمز الغرفة.");
         return;
       }
+      const roomRef = ref(db, "rooms/" + roomCode);
       get(child(ref(db), "rooms/" + roomCode)).then(snapshot => {
         if (snapshot.exists()) {
           loadVideo(snapshot.val());
@@ -123,10 +164,6 @@
         roomListDiv.classList.remove("hidden");
       });
     }
-    function extractYouTubeID(url) {
-      let match = url.match(/(?:https?:\/\/)?(?:www\.)?youtu(?:\.be\/|be\.com\/(?:watch\\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
-      return match ? match[1] : null;
-    }
     window.loadVideo = function(roomData) {
       document.getElementById("room-owner").innerText = roomData.owner;
       document.getElementById("video-frame").src = `https://www.youtube-nocookie.com/embed/${roomData.videoId}?autoplay=1&rel=0`;
@@ -146,6 +183,7 @@
     <input type="text" id="room-code" placeholder="رمز الغرفة">
     <input type="text" id="youtube-link" placeholder="رابط يوتيوب">
     <button onclick="createRoom()">إنشاء</button>
+    <button onclick="deleteRoom()" class="btn-delete">حذف غرفتي</button>
     <button onclick="goBack()">رجوع</button>
   </div>
   <div id="join-room-section" class="container hidden">
